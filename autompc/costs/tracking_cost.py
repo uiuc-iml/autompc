@@ -5,11 +5,11 @@ from .cost import Cost
 class TrackingCost(Cost):
     def __init__(self, system, cost, goal=None, **properties):
         """
-        Create quadratic cost.  Cost is:
+        Create tracking cost cost.  Cost is:
         
-            \sum_i (x[i]-xg)^T Q (x[i]-xg) + u[i]^T R u[i] + (x[T]-xg)^T F (x[T]-xg)
+            \sum_i cost(x[i],xg[i])
         
-        where xg is a goal state (may be None, in which case it is treated
+        where xg is a time series of goal state (may be None, in which case it is treated
         as zero).
 
         Parameters
