@@ -1,5 +1,3 @@
-# Created by William Edwards (wre2@illinois.edu), 2022-01-26
-
 # Standard library includes
 import unittest
 import sys
@@ -148,7 +146,7 @@ class MLPTest(GenericDiffTest, unittest.TestCase):
                 "sigmoid" : sigmoid_config}
 
     def get_precomputed_prefix(self):
-        return "precomputed/mlp_diff"
+        return "precomputed/mlp"
 
 class ARMLPTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -165,7 +163,7 @@ class ARMLPTest(GenericDiffTest, unittest.TestCase):
                 "tanh" : tanh_config,
                 "sigmoid" : sigmoid_config}
     def get_precomputed_prefix(self):
-        return "precomputed/armlp_diff"
+        return "precomputed/armlp"
 
 class ARXTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -175,7 +173,7 @@ class ARXTest(GenericDiffTest, unittest.TestCase):
         return dict()
 
     def get_precomputed_prefix(self):
-        return "precomputed/arx_diff"
+        return "precomputed/arx"
 
 class SINDyTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -204,7 +202,7 @@ class SINDyTest(GenericDiffTest, unittest.TestCase):
                 }
 
     def get_precomputed_prefix(self):
-        return "precomputed/sindy_diff"
+        return "precomputed/sindy"
 
 class ApproximateGPTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -214,7 +212,7 @@ class ApproximateGPTest(GenericDiffTest, unittest.TestCase):
         return dict()
 
     def get_precomputed_prefix(self):
-        return "precomputed/approxgp_diff"
+        return "precomputed/approxgp"
 
 class KoopmanTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -258,7 +256,7 @@ class KoopmanTest(GenericDiffTest, unittest.TestCase):
                 "lasso" : lasso_config}
 
     def get_precomputed_prefix(self):
-        return "precomputed/koopman_diff"
+        return "precomputed/koopman"
 
 if __name__ == "__main__":
     if sys.argv[1] == "precompute" or sys.argv[1] == "test":
