@@ -49,7 +49,7 @@ class SequenceTransformer(OCPTransformer):
     def __call__(self, ocp, t=None, horizon=None):
         # Run all transformers in reverse order
         for i, transformer in reversed(list(enumerate(self._transformers))):
-            ocp = transformer(ocp, ts)
+            ocp = transformer(ocp, t, horizon)
         return ocp
 
     @property

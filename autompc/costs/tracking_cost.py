@@ -3,19 +3,23 @@ import numpy as np
 from .cost import Cost
 
 class TrackingCost(Cost):
-    """
-    Time Varying Cost Wrapper
-    """
     def __init__(self, system, cost, goal=None, **properties):
         """
-        Create cost
+        Create quadratic cost.  Cost is:
+        
+            \sum_i (x[i]-xg)^T Q (x[i]-xg) + u[i]^T R u[i] + (x[T]-xg)^T F (x[T]-xg)
+        
+        where xg is a goal state (may be None, in which case it is treated
+        as zero).
 
         Parameters
         ----------
         system : System
             Robot system for which cost will be evaluated
         cost : Cost
-            Cost that will be evaluated for every time step
+            Cost that will be evaluated at every time step
+        goal : numpy array of shape (reference trajectory length, self.obs_dim)
+            Time seriese of goal state. Default is zero state
         properties : Dict
             a dictionary of properties that may be present in a cost and
             relevant to the selection of optimizers. Common values include:
@@ -28,7 +32,15 @@ class TrackingCost(Cost):
         super().__init__(system)
         self._cost = cost
         self.properties = {}
+        if goal is None:
+            goal = np.zeros((1, system.obs_dimi))
         self.goal = goal
+        self.properties['goal'] = np.copy(goal)
+        
+        self.properties['quad'] = self.is_quad
+        self.properties['convex'] = self.is_convex
+        self.properties['diff'] = self.is_diff
+        self.properties['twice_diff'] = self.is_twice_diff
 
     def incremental(self, obs, control, t):
         self._cost.set_goal(self.goal[t])
