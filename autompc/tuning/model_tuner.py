@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import os 
 import pickle
 
+
 from smac.scenario.scenario import Scenario
 from smac.facade.smac_hpo_facade import SMAC4HPO
 from smac.facade.smac_ac_facade import SMAC4AC
@@ -67,7 +68,7 @@ class ModelTuner:
     def __init__(self, system : System, trajs : List[Trajectory], model : Optional[Model] = None,
                 eval_holdout=0.25, eval_folds=3, eval_metric="rmse", eval_horizon=1, eval_quantile=None,
                 evaluator : Optional[ModelEvaluator] = None,
-                multi_fidelity=False, verbose=0, meta_learning = False):
+                multi_fidelity=False, verbose=0, meta_learning=False, portfolio_size=1):
         """
         Parameters
         ----------
@@ -96,6 +97,10 @@ class ModelTuner:
             Whether to use the multi-fidelity SMAC
         verbose : int
             Whether to print messages. 1 = basic messages, 2 = detailed messages.
+        meta_learning : bool
+            Whether to use meta-learning to select the portfolio of models.
+        portfolio_size : int
+            The number of models to select from the portfolio.
         """
         if model is None:
             model = AutoSelectModel(system)
@@ -121,9 +126,10 @@ class ModelTuner:
         self.meta_learning = meta_learning
         self.portfolio = None 
         
+        # Load portfolio file
         if self.meta_learning:
-            portfolio_file = '/home/baoyu/baoyul2/autompc/autompc/model_metalearning/meta_portfolio'
-            portfolio = load_portfolio(portfolio_file)
+            portfolio_file = '/home/baoyul2/scratch/autompc/autompc/model_metalearning/meta_portfolio'
+            portfolio = load_portfolio(portfolio_file, portfolio_size)
             self.portfolio = portfolio
 
     def _evaluate(self, cfg, seed=None, budget=None):

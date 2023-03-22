@@ -6,6 +6,7 @@ meta_cfg
 meta_data
 figs
 examples
+sbatch_out*
 
 .vscode/
 .venv/

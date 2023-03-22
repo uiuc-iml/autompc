@@ -12,7 +12,7 @@ from .control_benchmark import ControlBenchmark
 from ..utils.data_generation import *
 from .. import System
 from ..task import Task
-from ..costs import ThresholdCost, BoxThresholdCost
+from ..costs import ThresholdCost
 
 def cartpole_simp_dynamics(y, u, g = 9.8, m = 1, L = 1, b = 0.1, m_pole=0.0):
     """
@@ -20,7 +20,6 @@ def cartpole_simp_dynamics(y, u, g = 9.8, m = 1, L = 1, b = 0.1, m_pole=0.0):
     ----------
         y : states
         u : control
-
     Returns
     -------
         A list describing the dynamics of the cart pole
@@ -58,10 +57,7 @@ class CartpoleSwingupBenchmark(ControlBenchmark):
         system = ampc.System(["theta", "omega", "x", "dx"], ["u"])
         system.dt = 0.05
 
-        # DEBUG
         cost = ThresholdCost(system, goal=np.zeros(4), threshold=0.2, obs_range=(0,3))
-        # print(cost.properties)
-        # exit()
         task = Task(system,cost)
         task.set_ctrl_bound("u", -20.0, 20.0)
         init_obs = np.array([3.1, 0.0, 0.0, 0.0])
@@ -77,18 +73,14 @@ class CartpoleSwingupBenchmark(ControlBenchmark):
     def visualize(self, fig, ax, traj, margin=5.0):
         """
         Visualize the cartpole trajectory.
-
         Parameters
         ----------
         fig : matplotlib.figure.Figure
             Figure to generate visualization in.
-
         ax : matplotlib.axes.Axes
             Axes to create visualization in.
-
         traj : Trajectory
             Trajectory to visualize
-
         margin : float
             Shift the viewing window by this amount when the 
             cartpole reaches the edge of the screen
