@@ -55,25 +55,42 @@ def gym_dynamics(env, x, u, n_frames=5):
 
     return out
 
-# class HalfcheetahCost(Cost):
-#     def __init__(self, env):
-#         Cost.__init__(self,None)
-#         self.env = env
+def gym_reward(env, x, u, n_frames=5):
+    old_state = env.sim.get_state()
+    old_qpos = old_state[1]
+    old_qvel = old_state[2]
 
-#     def __call__(self, traj):
-#         cum_reward = 0.0
-#         for i in range(len(traj)-1):
-#             reward_ctrl = -0.1 * np.square(traj[i].ctrl).sum()
-#             reward_run = (traj[i+1, "x0"] - traj[i, "x0"]) / self.env.dt
-#             cum_reward += reward_ctrl + reward_run
-#         return 200 - cum_reward
+    qpos = x[:len(old_qpos)]
+    qvel = x[len(old_qpos):len(old_qpos)+len(old_qvel)]
 
-#     def incremental(self,obs,ctrl):
-#         raise NotImplementedError
+    # Represents a snapshot of the simulator's state.
+    new_state = mujoco_py.MjSimState(old_state.time, qpos, qvel, old_state.act, old_state.udd_state)
+    env.sim.set_state(new_state)
 
-#     def terminal(self,obs):
-#         raise NotImplementedError
+    total_reward = 0
+    # env.sim.data.ctrl[:] = u
+    _, total_reward, _, _  = env.step(u)
+    # for _ in range(n_frames):
+    #     _, reward, _, _, _ = env.sim.step()
+    #     total_reward += reward
 
+    return total_reward
+
+def check_terminated(env, x, u):
+    old_state = env.sim.get_state()
+    old_qpos = old_state[1]
+    old_qvel = old_state[2]
+
+    qpos = x[:len(old_qpos)]
+    qvel = x[len(old_qpos):len(old_qpos)+len(old_qvel)]
+
+    # Represents a snapshot of the simulator's state.
+    new_state = mujoco_py.MjSimState(old_state.time, qpos, qvel, old_state.act, old_state.udd_state)
+    env.sim.set_state(new_state)
+
+    _, _, terminated, _  = env.step(u)
+    
+    return terminated
 
 def gen_trajs(env, system, num_trajs=1000, traj_len=1000, seed=42):
     rng = np.random.default_rng(seed)
@@ -102,6 +119,34 @@ def gen_trajs(env, system, num_trajs=1000, traj_len=1000, seed=42):
         trajs.append(traj)
     return trajs
 
+class GymRewardCost(Cost):
+    def __init__(self, system, env, cost_offset=200, plausible_threshold=-1000):
+        Cost.__init__(self,system)
+        self.env = env
+        self._cost_offset = cost_offset
+        self.plausible_threshold = plausible_threshold
+
+    def __call__(self, traj, cost_offset=200):
+        cum_reward = 0.0
+        for i in range(len(traj)-1):
+            cum_reward += gym_reward(self.env, traj[i].obs, traj[i].ctrl)
+        cost = self._cost_offset - cum_reward
+        if cost < self.plausible_threshold:
+            cost = np.inf
+        return cost
+
+    def incremental(self,obs,ctrl):
+        raise NotImplementedError
+
+    def terminal(self,obs):
+        raise NotImplementedError
+
+
+def _get_init_obs(env):
+    env.reset()
+    qpos = env.sim.data.qpos
+    qvel = env.sim.data.qvel
+    return np.concatenate([qpos, qvel])
 
 class GymBenchmark(Benchmark):
     """
@@ -192,23 +237,10 @@ class GymExtensionBenchmark(Benchmark):
 
         system.dt = env.dt
         task = Task(system)
-
-        # cost = HalfcheetahCost(env)
-        # task = Task(system,cost)
-        # task.set_ctrl_bounds(env.action_space.low, env.action_space.high)
-        # init_obs = np.concatenate([env.init_qpos, env.init_qvel])
-        # task.set_init_obs(init_obs)
-        # task.set_num_steps(200)
-
-        # factory = QuadCost(system, goal = np.zeros(system.obs_dim))
-        # for obs in system.observations:
-        #     if not obs in ["x1", "x6", "x7", "x8", "x9"]:
-        #         factory.fix_Q_value(obs, 0.0)
-        #     if not obs in ["x1", "x9"]:
-        #         factory.fix_F_value(obs, 0.0)
-        # factory.set_tunable_goal("x9", lower_bound=0.0, upper_bound=5.0, default=1.0)
-        # self.cost_factory = factory
-
+        task.set_init_obs(self._get_init_obs())
+        task.set_cost(self._get_cost(system))
+        task.set_ctrl_bounds(env.action_space.low, env.action_space.high)
+        task.set_num_steps(200)
 
         super().__init__(name, system, task, data_gen_method)
 
@@ -235,3 +267,9 @@ class GymExtensionBenchmark(Benchmark):
     @staticmethod
     def data_gen_methods():
         return ["uniform_random"]
+
+    def _get_init_obs(self):
+        return _get_init_obs(self.env)
+
+    def _get_cost(self, system):
+        return GymRewardCost(system, self.env)
