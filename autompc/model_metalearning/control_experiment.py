@@ -1,8 +1,10 @@
 from argparse import ArgumentParser
 from pathlib import Path
-import pickle
+import pickle, json
+from collections import namedtuple
 
 import numpy as np
+from ConfigSpace import Configuration
 
 from .. import Controller
 from ..tuning import ControlTuner
@@ -15,20 +17,8 @@ from ..benchmarks import CartpoleSwingupBenchmark
 
 from meta_utils import load_data, load_cfg
 
-DATA_PATH = Path(__file__).parent / "meta_data"
-CFG_PATH = Path(__file__).parent / "meta_cfg"
-
-def get_controller(benchmark, sysid_trajs, model, transformer):
-    # Create controller
-    controller = Controller(benchmark.system)
-    controller.set_ocp_transformer(transformer)
-    controller.set_optimizer(IterativeLQR(benchmark.system))
-    controller.set_model(model)
-    controller.set_ocp(benchmark.task)
-
-    controller.build(sysid_trajs)
-
-    return controller
+CONFIG_PATH = "controller_cfgs/"
+ExperimentLabel = namedtuple("ExperimentLabel", "portfolio_size seed")
 
 def get_ocp_transformer(system):
     # Get index of x velocity
@@ -46,47 +36,64 @@ def get_ocp_transformer(system):
 
     return transformer
 
-def run_experiment(args):
-    with open(args.cfg1, "rb") as f:
-        config_1 = pickle.load(f)
-    with open(args.cfg2, "rb") as f:
-        config_2 = pickle.load(f)
+def get_controller(benchmark, transformer, trajs, cfg_dict):
+    model = MLP(benchmark.system)
+    controller = Controller(benchmark.system)
+    controller.set_ocp_transformer(transformer)
+    controller.add_model(model)
+    optim = IterativeLQR(benchmark.system)
+    controller.add_optimizer(optim)
+
+    cs = controller.get_config_space()
+    cfg = Configuration(cs, values=cfg_dict)
+    controller.set_config(cfg)
+
+    controller.set_ocp(benchmark.task)
+    controller.build(trajs)
+
+    return controller
+
+def run_experiment(benchmark, config):
+    system = benchmark.system
+    trajs = benchmark.gen_trajs(n_trajs=100, traj_len=200, seed=100)
+    transformer = QuadCostTransformer(benchmark.system)
     
-    if args.system_name == "CartpoleSwingup":
-        benchmark = CartpoleSwingupBenchmark()
-        system = benchmark.system
-        trajs = benchmark.gen_trajs(n_trajs=500, traj_len=200, seed=0)
-        transformer = QuadCostTransformer(benchmark.system)
-        transformer.fix_R_value("u", 0.01)
-    else:
-        system, trajs = load_data(path=DATA_PATH, name=args.system_name)
-        benchmark = GymExtensionBenchmark(name=args.system_name)
-        transformer = get_ocp_transformer(system)
-    
-    model_1 = AutoSelectModel(benchmark.system)
-    model_2 = AutoSelectModel(benchmark.system)
-    model_1.set_config(config_1)
-    model_2.set_config(config_2)
+    controller = get_controller(benchmark, transformer, trajs, config)
 
-    controller_1 = get_controller(benchmark, trajs, model_1, transformer)
-    controller_2 = get_controller(benchmark, trajs, model_2, transformer)
+    traj, cost, termcond = benchmark.task.simulate(controller, benchmark.dynamics)
 
-    traj_1, cost_1, termcond_1 = benchmark.task.simulate(controller_1, benchmark.dynamics)
-    traj_2, cost_2, termcond_2 = benchmark.task.simulate(controller_2, benchmark.dynamics)
+    return cost, traj
 
-    print(f"{cost_1=}")
-    print(f"{cost_2=}")
+def main():
+    benchmark = CartpoleSwingupBenchmark()
+    benchmark_name = "CartpoleSwingup"
+    portfolio_sizes = [0,5,10]
+    seeds = [0,1,2,3,4]
+
+    costs = dict()
+    trajs = dict()
+
+    # Run experiments
+    for portfolio_size in portfolio_sizes:
+        for seed in seeds:
+            config_path = Path(CONFIG_PATH) / f"{benchmark_name}_port_{portfolio_size}_seed_{seed}.json"
+            with open(config_path, "r") as f:
+                config = json.load(f)
+
+            cost, traj = run_experiment(benchmark, config)
+
+            experiment_label = ExperimentLabel(portfolio_size=portfolio_size, seed=seed)
+            costs[experiment_label] = cost
+            trajs[experiment_label] = traj
+
+    # Compute summary statistics and print
+    print(f"Results for {benchmark_name}")
+    print(f"=================================")
+    for portfolio_size in portfolio_sizes:
+        costs_for_size = [costs[ExperimentLabel(portfolio_size=portfolio_size, seed=seed)] for seed in seeds]
+        print(f"Portfolio Size: {portfolio_size}, Mean: {np.mean(costs_for_size):.4f}, Std: {np.std(costs_for_size):.4f}, Raw Values: {costs_for_size}")
 
     breakpoint()
 
-
-
-
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--system_name", "-s")
-    parser.add_argument("--cfg1")
-    parser.add_argument("--cfg2")
-    args = parser.parse_args()
-
-    run_experiment(args)
+    main()
