@@ -66,6 +66,7 @@ class AutoSelectModel (Model, TunablePipeline):
         if self.selected_model is None:
             raise RuntimeError("Must set a valid model configuration before training")
         self.selected_model.train(trajs)
+        self.is_trained = self.selected_model.is_trained
 
     def set_train_budget(self, seconds=None):
         self.train_time_limit = seconds
@@ -111,7 +112,9 @@ class AutoSelectModel (Model, TunablePipeline):
     def clear(self) -> None:
         if self.selected_model is None:
             return
-        return self.selected_model.clear()
+        result = self.selected_model.clear()
+        self.is_trained = self.selected_model.is_trained
+        return result
 
     def to_linear(self):
         if self.selected_model is None:
