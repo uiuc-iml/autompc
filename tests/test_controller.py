@@ -58,6 +58,7 @@ class ControllerTest(unittest.TestCase):
         controller.set_model(MLP(self.benchmark.system))
         controller.set_optimizer(IterativeLQR(self.benchmark.system))
         controller.set_ocp_transformer(QuadCostTransformer(self.benchmark.system))
+        controller.set_ocp(self.benchmark.task)
 
         cs = controller.get_config_space()
         self.assertIsInstance(cs, ConfigurationSpace)
