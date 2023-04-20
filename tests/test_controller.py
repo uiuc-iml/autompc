@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 
 # External library includes
 import numpy as np
+from ConfigSpace import ConfigurationSpace
 
 # Internal library includes
 sys.path.insert(0, "..")
@@ -50,3 +51,26 @@ class ControllerTest(unittest.TestCase):
 
         self.assertEquals(control_1, control_1b)
         self.assertEquals(control_2, control_2b)
+
+    def test_config_space(self):
+        # Set-up Controller
+        controller = Controller(self.benchmark.system)
+        controller.set_model(MLP(self.benchmark.system))
+        controller.set_optimizer(IterativeLQR(self.benchmark.system))
+        controller.set_ocp_transformer(QuadCostTransformer(self.benchmark.system))
+
+        cs = controller.get_config_space()
+        self.assertIsInstance(cs, ConfigurationSpace)
+
+        # Check all relevant hyperparameters are present
+        for model in controller.models:
+            for hyper_name in model.get_config_space().get_hyperparameter_names():
+                self.assertIn(model.name + ":" + hyper_name, cs.get_hyperparameter_names())
+
+        for optim in controller.optimizers:
+            for hyper_name in optim.get_config_space().get_hyperparameter_names():
+                self.assertIn(optim.name + ":" + hyper_name, cs.get_hyperparameter_names())
+
+        for trans in controller.ocp_transformers:
+            for hyper_name in trans.get_config_space().get_hyperparameter_names():
+                self.assertIn(trans.name + ":" + hyper_name, cs.get_hyperparameter_names())
