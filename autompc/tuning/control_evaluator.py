@@ -21,7 +21,10 @@ def trial_to_json(trial : ControlEvaluationTrial):
     res['policy'] = str(trial.policy)
     res['task'] = str(trial.task)
     res['dynamics'] = str(trial.dynamics)
-    res['traj'] = [trial.traj.obs.tolist(),trial.traj.ctrls.tolist()]
+    if trial.traj:
+        res['traj'] = [trial.traj.obs.tolist(),trial.traj.ctrls.tolist()]
+    else:
+        res['traj'] = None
     return res
 
 class ControlEvaluator(ABC):
