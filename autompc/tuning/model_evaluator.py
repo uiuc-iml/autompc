@@ -9,7 +9,7 @@ from ConfigSpace import Configuration
 from ..sysid.metrics import get_model_rmse,get_model_rmsmens
 from ..trajectory import Trajectory
 from ..sysid.model import Model
-
+from .parallel_utils import SerialBackend
 
 class ModelEvaluator(ABC):
     """
@@ -60,6 +60,9 @@ class ModelEvaluator(ABC):
         """
         raise NotImplementedError
 
+    def set_data_store(self, data_store):
+        self._data_store = data_store
+
 
 
 class HoldoutModelEvaluator(ModelEvaluator):
@@ -104,8 +107,20 @@ class HoldoutModelEvaluator(ModelEvaluator):
             if traj not in self.holdout:
                 self.training_set.append(traj)
 
+    def set_data_store(self, data_store):
+        super().set_data_store(data_store)
+        self.holdout = data_store.wrap(self.holdout)
+        self.training_set = data_store.wrap(self.training_set)
+
     def __call__(self, model):
         m = model.clone()
+        training_set = self.training_set
+        holdout = self.holdout
+        if hasattr(training_set, "unwrap"):
+            training_set = training_set.unwrap()
+        if hasattr(holdout, "unwrap"):
+            holdout = holdout.unwrap()
+
         m.train(self.training_set)
         metric_value = self.metric(m, self.holdout)
         if self.verbose:
@@ -117,7 +132,7 @@ class CrossValidationModelEvaluator(ModelEvaluator):
     """
     Evaluate model prediction accuracy according to k-fold cross validation.
     """
-    def __init__(self, *args, rng = None, num_folds = 3, verbose=False, **kwargs):
+    def __init__(self, *args, rng = None, num_folds = 3, verbose=False, parallel_backend=None, **kwargs):
         """
         Parameters
         ----------
@@ -135,6 +150,8 @@ class CrossValidationModelEvaluator(ModelEvaluator):
             Number of folds to evaluate.
         verbose : bool
             Whether to print information during evaluation
+        parallel_backend : ParallelBackend
+            Backend to use to compute folds in parallel.
         """
         if num_folds <= 1:
             raise ValueError("Invalid number of folds")
@@ -144,25 +161,35 @@ class CrossValidationModelEvaluator(ModelEvaluator):
         if len(self.trajs) < num_folds:
             raise ValueError("Need at least as many trajectories as folds")
         self.verbose = verbose
-        self.shuffled_trajs = rng.permutation(list(range(len(self.trajs))))
+        shuffled_trajs = rng.permutation(list(range(len(self.trajs))))
         self.folds = []
         splits = [(len(self.trajs)*(f))//num_folds for f in range(num_folds+1)]
         for f in range(num_folds):
-            train = np.hstack((self.shuffled_trajs[:splits[f]],self.shuffled_trajs[splits[f+1]:]))
-            test = self.shuffled_trajs[splits[f]:splits[f+1]]
+            train = np.hstack((shuffled_trajs[:splits[f]],shuffled_trajs[splits[f+1]:]))
+            test = shuffled_trajs[splits[f]:splits[f+1]]
             self.folds.append(([self.trajs[i] for i in train],[self.trajs[i] for i in test]))
-        
+
+        if parallel_backend is None:
+            parallel_backend = SerialBackend()
+        self.parallel_backend = parallel_backend
+
+    def set_data_store(self, data_store):
+        super().set_data_store(data_store)
+        self.folds = [data_store.wrap(fold) for fold in self.folds]
+
+    def _run_fold(self, model, fold):
+        if hasattr(fold, "unwrap"):
+            fold = fold.unwrap()
+        if hasattr(model, "unwrap"):
+            model = model.unwrap()
+        train, test = fold
+        m = model.clone()
+        m.train(train)
+        metric_value = self.metric(m, test)
+        return metric_value
+
     def __call__(self, model):
-        values = []
-        for (train,test) in self.folds:
-            m = model.clone()
-            m.train(train)
-            metric_value = self.metric(m, test)
-            if np.isinf(metric_value):
-                if self.verbose:
-                    print("Cross-validation got an infinite value, returning")
-                return np.inf
-            values.append(metric_value)
+        values = self.parallel_backend.map(partial(self._run_fold, model), self.folds)
         if self.verbose:
             print("Cross-validation values:",values)
         return np.mean(values)

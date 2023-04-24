@@ -68,8 +68,11 @@ class ModelTuner:
     def __init__(self, system : System, trajs : List[Trajectory], model : Optional[Model] = None,
                 eval_holdout=0.25, eval_folds=3, eval_metric="rmse", eval_horizon=1, eval_quantile=None,
                 evaluator : Optional[ModelEvaluator] = None,
-                multi_fidelity=False, verbose=0, meta_learning=False, portfolio_size=1):
+                multi_fidelity=False, meta_learning=False, portfolio_size=1, 
+                parallel_backend=None, verbose=0):
         """
+        TODO Update docstring
+
         Parameters
         ----------
         system : System
@@ -114,7 +117,7 @@ class ModelTuner:
             else:
                 print("Foo")
                 evaluator = CrossValidationModelEvaluator(trajs, eval_metric, horizon=eval_horizon, quantile=eval_quantile, num_folds=eval_folds,
-                    rng=np.random.default_rng(100))
+                    rng=np.random.default_rng(100), parallel_backend=parallel_backend)
         else:
             evaluator.trajs = trajs
         
@@ -128,7 +131,7 @@ class ModelTuner:
         
         # Load portfolio file
         if self.meta_learning:
-            portfolio_file = '/scratch/bbqi/baoyul2/autompc/autompc/model_metalearning/meta_portfolio'
+            portfolio_file = '/scratch/bbqi/baoyul2/autompc/autompc/model_metalearning/meta_portfolio' #TODO: change to relative path
             portfolio = load_portfolio(portfolio_file, portfolio_size)
             self.portfolio = portfolio
 
@@ -208,10 +211,18 @@ class ModelTuner:
             Additional information from tuning process.  Can access
             tune_result.inc_cfg to reconsruct the model.
         """
+        smac_runner = SMACRunner(
+            output_dir=output_dir,
+            restore_dir=restore_dir,
+            use_default_initial_design=use_default_initial_design
+        )
+        data_store = smac_runner.get_data_store()
+
         if rng is None:
             rng = np.random.default_rng(100)
 
         self.evaluator.rng = rng # TODO Fix this
+        self.evaluator.set_data_store(data_store)
         cfg_evaluator = ModelCfgEvaluator(self.model, self.evaluator)
 
         cs = self.model.get_config_space()
@@ -250,5 +261,4 @@ class ModelCfgEvaluator:
         value = self.evaluator(self.model)
         print("Model Score ", value)
 
-        return value
-
+        return value, dict()

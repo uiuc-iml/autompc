@@ -7,16 +7,22 @@ import time
 import numpy as np
 import numpy.linalg as la
 from ConfigSpace import ConfigurationSpace
-from ConfigSpace.hyperparameters import UniformIntegerHyperparameter
+from ConfigSpace.hyperparameters import UniformIntegerHyperparameter, CategoricalHyperparameter
+from ConfigSpace.conditions import InCondition
 
 # Internal libary includes
 from .optimizer import Optimizer
 from ..trajectory import Trajectory
+from ..utils.cs_utils import get_hyper_bool, get_hyper_int
 
 def inverse_semidefinite(A, damping=1e-3):
-    w,V = np.linalg.eigh(A)
+    try:
+        w,V = np.linalg.eigh(A)
+    except:
+        breakpoint()
     winv = np.divide(1.0,(w + damping))
     return np.multiply(V.T,winv) @ V
+
 class IterativeLQR(Optimizer):
     """
     Iterative Linear Quadratic Regulator (ILQR) can be considered as a Dynamic Programming (DP) method to solve trajectory optimization problems.
@@ -37,10 +43,18 @@ class IterativeLQR(Optimizer):
     - **horizon** *(Type: int, Low: 5, Upper: 25, Default: 20)*: MPC optimization horizon.
     - **frequency** *(Type: int, Low: 1, Upper: 5, Default: 1)*: Recompute trajectory every
       `frequency` steps.  Otherwise, will use the prior gains.
+    - **max_iter** *(Type: int, Low: 10, Upper: 50, Default: 20)*: Maximum number of iterations
+        to run iLQR at each step.    
+    - **random_restarts** *(Optional, Type: bool, Default: False)*: When true, random restarts
+        are run periodically.  Hyperparameter only present when enable_random_restarts=True.
+    - **random_restart_frequency** *(Optional, Type: bool, Lower: 1, Upper: 10, Default: 3)*:
+        Try random restart every `random_restart_frequency` steps.  Enabled only when
+        `random_restarts` is true. Hyperparameter only present when enable_random_restarts=True.
     """
-    def __init__(self, system, verbose=False):
-        super().__init__(system, "IterativeLQR")
+    def __init__(self, system, verbose=False, enable_random_restarts=False):
         self.verbose = verbose
+        self.enable_random_restarts=enable_random_restarts
+        super().__init__(system, "IterativeLQR")
 
     def get_default_config_space(self):
         cs = ConfigurationSpace()
@@ -53,20 +67,40 @@ class IterativeLQR(Optimizer):
         cs.add_hyperparameter(horizon)
         cs.add_hyperparameter(max_iter)
         cs.add_hyperparameter(frequency)
+
+        if self.enable_random_restarts:
+            random_restarts = CategoricalHyperparameter(
+                name="random_restarts",
+                choices=["true", "false"],
+                default_value="false")
+            random_restart_frequency = UniformIntegerHyperparameter(
+                name="random_restart_frequency",
+                lower=1, upper=10, default_value=3)
+            use_random_restarts = InCondition(
+                child=random_restart_frequency,
+                parent=random_restarts,
+                values=["true"])
+            cs.add_hyperparameters([random_restarts, random_restart_frequency])
+            cs.add_condition(use_random_restarts)
         return cs
 
     def set_config(self, config):
-        self.horizon = config["horizon"]
-        self.max_iter = config["max_iter"]
-        self.frequency = config["frequency"]
+        self.horizon = get_hyper_int(config, "horizon")
+        self.max_iter = get_hyper_int(config, "max_iter")
+        self.frequency = get_hyper_int(config, "frequency")
         if self.frequency >= self.horizon:
             self.frequency = self.horizon - 1
+        if self.enable_random_restarts:
+            self.random_restarts = get_hyper_bool(config, "random_restarts")
+            self.random_restart_frequency = get_hyper_int(config, "random_restart_frequency")
 
-    def reset(self):
+    def reset(self, seed=0):
         self._guess = None
         self._traj = None
         self._gains = None
         self._step = 0
+        self._steps_since_random_restart = 0
+        self._rng = np.random.default_rng(seed)
 
     def set_ocp(self, ocp):
         super().set_ocp(ocp)
@@ -159,11 +193,8 @@ class IterativeLQR(Optimizer):
                 Qux = Qt[dimx:, :dimx]
                 qx = qt[:dimx]
                 qu = qt[dimx:]
-                QuuInv = inverse_semidefinite(Quu,1e-2)
-                K = -QuuInv @ Qux
-                k = -QuuInv @ qu
-                # K = -np.linalg.solve(Quu,Qux)
-                # k = -np.linalg.solve(Quu,qu)
+                K = -np.linalg.solve(Quu, Qux)
+                k = -np.linalg.solve(Quu, qu)
                 lin_cost_reduce += qu.dot(k)
                 quad_cost_reduce += k @ Quu @ k
                 # update Vn and vn
@@ -266,7 +297,7 @@ class IterativeLQR(Optimizer):
         if self.verbose and not converged :
             print('ilqr fails to converge, try a new guess? Last u update is %f ks norm is %f' % (du_norm, ks_norm))
             print('ilqr is not converging...')
-        return converged, states, ctrls, Ks
+        return converged, states, ctrls, Ks, obj
     
     def set_guess(self, guess : Trajectory) -> None:
         assert len(guess) == self.horizon,"Invalid guess provided"
@@ -278,7 +309,26 @@ class IterativeLQR(Optimizer):
         if self._guess is None:
             self._guess = np.zeros((self.horizon, self.system.ctrl_dim))
         if substep == 0: 
-            converged, states, ctrls, Ks = self.compute_ilqr(obs, self._guess)
+            converged, states, ctrls, Ks, obj = self.compute_ilqr(obs, self._guess)
+
+            #Perform random restart
+            if self.enable_random_restarts and self.random_restarts:
+                self._steps_since_random_restart += 1
+                if self._steps_since_random_restart >= self.random_restart_frequency:
+                    print("Running random restart!")
+                    random_guess = self._rng.uniform(
+                        low=self.ubounds[0], 
+                        high=self.ubounds[1], 
+                        size=(self.horizon, self.system.ctrl_dim))
+                    _, rstates, rctrls, rKs, robj = self.compute_ilqr(obs, random_guess)
+                    print(f"Original Objective: {obj}\t Random Objective: {robj}")
+                    if robj < obj:
+                        obj = robj
+                        states = rstates
+                        ctrls = rctrls
+                        Ks = rKs
+                    self._steps_since_random_restart = 0
+
             self._guess = np.concatenate((ctrls[1:], ctrls[-1:]*0), axis=0)
             self._traj = Trajectory(self.model.state_system, states, 
                 np.vstack([ctrls, np.zeros(self.system.ctrl_dim)]))

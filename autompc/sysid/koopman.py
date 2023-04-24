@@ -13,7 +13,10 @@ import ConfigSpace.conditions as CSC
 # Internal library includes
 from ..system import System
 from .model import Model
+# try:
 from .stable_koopman import stabilize_discrete
+# except ImportError:
+#     pass
 from .basis_funcs import *
 from ..utils.cs_utils import *
 
@@ -186,7 +189,10 @@ class Koopman(Model):
         
         XU = np.concatenate((X, U), axis = 0) # stack X and U together
         if self.method == "lstsq": # Least Squares Solution
+<<<<<<< HEAD
             # AB = np.dot(Y, sla.pinv2(XU))
+=======
+>>>>>>> 0.2-dev
             AB = np.dot(Y, sla.pinv(XU))
             A = AB[:n, :n]
             B = AB[:n, n:]
