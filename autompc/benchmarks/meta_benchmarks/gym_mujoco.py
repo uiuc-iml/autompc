@@ -15,10 +15,6 @@ from ...task import Task
 from ...trajectory import Trajectory
 from ...costs import Cost, QuadCost
 
-gym_names = ["HalfCheetah-v2", "Hopper-v2", "Walker2d-v2", "Swimmer-v2", "InvertedPendulum-v2", 
-              "Reacher-v2", "Pusher-v2", "InvertedDoublePendulum-v2", 
-              "Ant-v2", "Humanoid-v2", "HumanoidStandup-v2"]
-
 def viz_gym_traj(env, traj, repeat):
     for _ in range(repeat):
         env.reset()
