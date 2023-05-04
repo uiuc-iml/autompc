@@ -132,7 +132,7 @@ class CrossValidationModelEvaluator(ModelEvaluator):
     """
     Evaluate model prediction accuracy according to k-fold cross validation.
     """
-    def __init__(self, *args, rng = None, num_folds = 3, verbose=False, parallel_backend=None, **kwargs):
+    def __init__(self, *args, rng = None, num_folds = 3, verbose=True, parallel_backend=None, **kwargs):
         """
         Parameters
         ----------
@@ -153,6 +153,10 @@ class CrossValidationModelEvaluator(ModelEvaluator):
         parallel_backend : ParallelBackend
             Backend to use to compute folds in parallel.
         """
+        
+        self.train_errors = []
+        self.valid_errors = []
+        
         if num_folds <= 1:
             raise ValueError("Invalid number of folds")
         if rng is None:
@@ -183,13 +187,23 @@ class CrossValidationModelEvaluator(ModelEvaluator):
         if hasattr(model, "unwrap"):
             model = model.unwrap()
         train, test = fold
+        print('train', train)
+        print('test', test)
         m = model.clone()
         m.train(train)
+        train_value = self.metric(m, train)
+        print("Training error:", train_value)
+        self.train_errors.append(train_value)
+        
         metric_value = self.metric(m, test)
+        print("Validation error:", metric_value)
+        self.valid_errors.append(metric_value)
         return metric_value
 
     def __call__(self, model):
         values = self.parallel_backend.map(partial(self._run_fold, model), self.folds)
         if self.verbose:
             print("Cross-validation values:",values)
+            print("Average training error:", np.mean(self.train_errors))
+            print("Average validation error:", np.mean(self.valid_errors))
         return np.mean(values)
