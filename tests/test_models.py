@@ -9,8 +9,6 @@ from abc import ABC, abstractmethod
 sys.path.insert(0, "..")
 import autompc as ampc
 from autompc.sysid import MLP, ARX, SINDy, ApproximateGPModel, Koopman
-# DEBUG
-from autompc.sysid.mlp import ARMLP
 from autompc.benchmarks import DoubleIntegratorBenchmark
 
 
