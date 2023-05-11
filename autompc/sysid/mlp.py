@@ -9,6 +9,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
 import ConfigSpace as CS
+from ConfigSpace.hyperparameters import UniformIntegerHyperparameter
 import ConfigSpace.hyperparameters as CSH
 import ConfigSpace.conditions as CSC
 
@@ -326,7 +327,8 @@ class MLP(FullyObservableModel):
 class ARMLP(MLP):
     def __init__(self, system, history=4, n_train_iters=200, n_batch=64, use_cuda=True):
         super().__init__(system, n_train_iters, n_batch, use_cuda)
-        self.k = history
+        self.name = "ARMLP"
+        # self.k = history
 
         # NOTE THIS CLASS INHERITS FROM FULLY OBSERVABLE MODEL AND HENCE ASSUMES SO
         # # shift out old states
@@ -336,30 +338,18 @@ class ARMLP(MLP):
         # # shift in new control
         # state[...,self.system.state_dim*self.k:self.system.state_dim*self.k+self.system.ctrl_dim] = new_ctrl
 
-        # First we construct the system matrices
-        A = np.zeros((self.state_dim, self.state_dim))
-        B = np.zeros((self.state_dim, self.system.ctrl_dim))
+        
 
-        # Shift history
-        n = self.system.obs_dim
-        l = self.system.ctrl_dim
-        m = self.system.obs_dim + self.system.ctrl_dim
-        k = self.k
+    def set_config(self, config):
+        self.k = config["history"]
+        super().set_config(config)
 
-        A[0 : n, 0 : n] = np.eye(n) # NN outputs dY
-        if k > 1:    
-            A[n : 2*n, 0 : n] = np.eye(n)
-        for i in range(k-2):
-            A[(i+1)*m+n : (i+2)*m+n, i*m+n : (i+1)*m+n] = np.eye(m)
-
-        # Predict new observation
-        # A[0 : n, :] = coeffs[:, :-l]
-
-        # Add new control
-        # B[0 : n, :] = coeffs[:, -l:]
-        B[2*n : 2*n + l, :] = np.eye(l)
-
-        self.A, self.B = A, B
+    def get_default_config_space(self):
+        cs = super().get_default_config_space()
+        history = UniformIntegerHyperparameter(name='history', 
+                lower=1, upper=10, default_value=4)
+        cs.add_hyperparameter(history)
+        return cs
 
     @property
     def state_dim(self):
@@ -428,6 +418,31 @@ class ARMLP(MLP):
         print(f"{self.net.parameters().__next__().device=}")
 
     def train(self, trajs, silent=False, seed=100):
+        # First set up shift matrices
+        A = np.zeros((self.state_dim, self.state_dim))
+        B = np.zeros((self.state_dim, self.system.ctrl_dim))
+
+        # Shift history
+        n = self.system.obs_dim
+        l = self.system.ctrl_dim
+        m = self.system.obs_dim + self.system.ctrl_dim
+        k = self.k
+
+        A[0 : n, 0 : n] = np.eye(n) # NN outputs dY
+        if k > 1:    
+            A[n : 2*n, 0 : n] = np.eye(n)
+        for i in range(k-2):
+            A[(i+1)*m+n : (i+2)*m+n, i*m+n : (i+1)*m+n] = np.eye(m)
+
+        # Predict new observation
+        # A[0 : n, :] = coeffs[:, :-l]
+
+        # Add new control
+        # B[0 : n, :] = coeffs[:, -l:]
+        B[2*n : 2*n + l, :] = np.eye(l)
+
+        self.A, self.B = A, B
+
         XU = np.concatenate([self._get_all_feature_vectors(traj[:-1]) for traj in trajs])
         dY = np.concatenate([traj.obs[1:,:] - traj.obs[:-1,:] for traj in trajs])
         assert XU.shape[1]==self._get_fvec_size()
