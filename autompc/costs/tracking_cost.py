@@ -3,23 +3,27 @@ import numpy as np
 from .cost import Cost
 
 class TrackingCost(Cost):
-    """
-    Time Varying Cost Wrapper
-    """
-    def __init__(self, system, cost, **properties):
+    def __init__(self, system, cost, goal=None, **properties):
         """
-        Create cost
+        Create tracking cost cost.  Cost is:
+        
+            \sum_i cost(x[i],xg[i])
+        
+        where xg is a time series of goal state (may be None, in which case it is treated
+        as zero).
 
         Parameters
         ----------
         system : System
             Robot system for which cost will be evaluated
         cost : Cost
-            Cost that will be evaluated for every time step
+            Cost that will be evaluated at every time step
+        goal : numpy array of shape (reference trajectory length, self.obs_dim)
+            Time seriese of goal state. Default is zero state
         properties : Dict
             a dictionary of properties that may be present in a cost and
             relevant to the selection of optimizers. Common values include:
-            - 'goal': a goal state (numpy array)
+            - 'goal': a time series of goal states (numpy array)
             - 'quad': whether the cost is quadratic (bool)
             - 'convex': whether the cost is convex (bool)
             - 'diff': whether the cost is differentiable (bool)
@@ -28,18 +32,15 @@ class TrackingCost(Cost):
         super().__init__(system)
         self._cost = cost
         self.properties = {}
-
-    def update_goal(self, obs):
-        self.goal[:-1] = self.goal[1:] 
-        self.goal[-1] = obs
-
-    def __call__(self, traj, ref_traj):
-        cost = 0.0
-        for i in range(len(traj)):
-            self.goal = ref_traj.obs[i:]
-            cost += self.incremental(traj[i].obs,traj[i].ctrl, 0)*self.system.dt
-        cost += self.terminal(traj[-1].obs, 0)
-        return cost
+        if goal is None:
+            goal = np.zeros((1, system.obs_dimi))
+        self.goal = goal
+        self.properties['goal'] = np.copy(goal)
+        
+        self.properties['quad'] = self.is_quad
+        self.properties['convex'] = self.is_convex
+        self.properties['diff'] = self.is_diff
+        self.properties['twice_diff'] = self.is_twice_diff
 
     def incremental(self, obs, control, t):
         self._cost.set_goal(self.goal[t])
@@ -91,7 +92,7 @@ class TrackingCost(Cost):
         """
         True if cost is twice differentiable
         """
-        return self._cost.properties.get('twice_diff')
+        return self._cost.properties.get('twice_diff', False)
 
     @property
     def has_goal(self):
