@@ -327,20 +327,9 @@ class MLP(FullyObservableModel):
         self.net.load_state_dict(params["net_state"])
 
 class ARMLP(MLP):
-    def __init__(self, system, history=4, n_train_iters=200, n_batch=64, use_cuda=True):
+    def __init__(self, system, n_train_iters=200, n_batch=64, use_cuda=True):
         super().__init__(system, n_train_iters, n_batch, use_cuda)
-        self.name = "ARMLP"
-        # self.k = history
-
-        # NOTE THIS CLASS INHERITS FROM FULLY OBSERVABLE MODEL AND HENCE ASSUMES SO
-        # # shift out old states
-        # state[...,self.system.state_dim:self.system.state_dim*self.k] = state[:,:self.system.state_dim*(self.k-1)]
-        # # shift out old control
-        # state[...,self.system.state_dim*self.k+self.system.ctrl_dim:] = state[:,self.system.state_dim*self.k:self.system.state_dim*self.k+self.system.ctrl_dim]
-        # # shift in new control
-        # state[...,self.system.state_dim*self.k:self.system.state_dim*self.k+self.system.ctrl_dim] = new_ctrl
-
-        
+        self.name = "ARMLP"       
 
     def set_config(self, config):
         self.k = config["history"]
@@ -576,3 +565,23 @@ class ARMLP(MLP):
         state_jac += np.tile(self.A, (m,1,1))
         ctrl_jac += np.tile(self.B, (m,1,1))
         return self.update_state(state.T, ctrl.T, (obs+dy).T).T, state_jac, ctrl_jac
+    
+    def get_parameters(self):
+        return {"net_state" : self.net.state_dict(),
+                "xu_means" : self.xu_means,
+                "xu_std" : self.xu_std,
+                "dy_means" : self.dy_means,
+                "dy_std" : self.dy_std,
+                "A" : self.A.tolist(), 
+                "B" : self.B.tolist() }
+
+    def set_parameters(self, params):
+        self.xu_means = params["xu_means"]
+        self.xu_std = params["xu_std"]
+        self.dy_means = params["dy_means"]
+        self.dy_std = params["dy_std"]
+        if self.net is None:
+            self._init_net()
+        self.net.load_state_dict(params["net_state"])
+        self.A = np.array(params["A"])
+        self.B = np.array(params["B"])
