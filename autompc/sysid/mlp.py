@@ -9,7 +9,6 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
 import ConfigSpace as CS
-from ConfigSpace.hyperparameters import UniformIntegerHyperparameter
 import ConfigSpace.hyperparameters as CSH
 import ConfigSpace.conditions as CSC
 
@@ -337,7 +336,7 @@ class ARMLP(MLP):
 
     def get_default_config_space(self):
         cs = super().get_default_config_space()
-        history = UniformIntegerHyperparameter(name='history', 
+        history = CSH.UniformIntegerHyperparameter(name='history', 
                 lower=1, upper=10, default_value=4)
         cs.add_hyperparameter(history)
         return cs
