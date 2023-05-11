@@ -173,7 +173,7 @@ class Koopman(Model):
     def set_train_budget(self, seconds=None):
         self.budget = seconds
 
-    def train(self, trajs, silent=False):
+    def train(self, trajs, seed=None):
         trans_obs = [self._transform_observations(traj.obs[:]) for traj in trajs]
         X = np.concatenate([obs[:-1,:] for obs in trans_obs]).T
         Y = np.concatenate([obs[1:,:] for obs in trans_obs]).T

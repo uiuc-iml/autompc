@@ -156,7 +156,7 @@ class SINDy(FullyObservableModel):
                     optimizer=ps.STLSQ(threshold=self.threshold, max_iter=max_iter))
         self.model = sindy_model
 
-    def train(self, trajs, xdot=None, silent=False):
+    def train(self, trajs, seed=None, xdot=None):
         self._init_model()
 
         X = [traj.obs for traj in trajs]

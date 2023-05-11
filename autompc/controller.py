@@ -426,10 +426,13 @@ class Controller(TunablePipeline,Policy):
         """
         return copy.deepcopy(self)
 
-    def build(self, trajs : List[Trajectory] = None , seed=None) -> None:
+    def build(self, trajs : List[Trajectory] = None , seed=100) -> None:
         """
         Builds the controller given its current configuration.  This includes
         training the model, constructing the OPC, and initializing the optimizer.
+
+        If the seed is None, the controller's components that are susceptible to
+        randomness (e.g., model training) will be built using current random seeds.
         """
         if hasattr(trajs, "unwrap"):
             trajs = trajs.unwrap()

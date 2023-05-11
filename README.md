@@ -38,6 +38,7 @@ If you are interested, check out our [detailed examples](examples/readme.md) for
 
 For System ID, AutoMPC supports
  * [Multi-layer Perceptrons](https://autompc.readthedocs.io/en/latest/source/sysid.html#multi-layer-perceptron)
+ * [Autoregressive Multi-layer Perceptrons](https://autompc.readthedocs.io/en/latest/source/sysid.html#autoregressive-multi-layer-perceptron)
  * [Sparse Identification of Nonlinear Dynamics (SINDy)](https://autompc.readthedocs.io/en/latest/source/sysid.html#sparse-identification-of-nonlinear-dynamics-sindy)
  * [Autoregression](https://autompc.readthedocs.io/en/latest/source/sysid.html#autoregression-arx)
  * [Koopman Operators](https://autompc.readthedocs.io/en/latest/source/sysid.html#koopman)

@@ -164,8 +164,7 @@ class MLP(FullyObservableModel):
         self._device = device
         self.net = self.net.to(device)
 
-    def _init_net(self, seed=100):
-        torch.manual_seed(seed)
+    def _init_net(self):
         self.net = ForwardNet(self.system.obs_dim + self.system.ctrl_dim, self.system.obs_dim, 
             self.hidden_sizes, self.nonlintype, self.batchnorm)
         self.net = self.net.double().to(self._device)
@@ -189,10 +188,8 @@ class MLP(FullyObservableModel):
         dataset = SimpleDataset(feedX, predY)
         self.dataloader = DataLoader(dataset, batch_size=self.n_batch, shuffle=True)
 
-    def _init_train(self, seed):
-        self._init_net(seed)
-        torch.manual_seed(seed)
-
+    def _init_train(self):
+        self._init_net()
         self.net.train()
         for param in self.net.parameters():
             param.requires_grad_(True)
@@ -219,14 +216,16 @@ class MLP(FullyObservableModel):
     def set_train_budget(self, seconds=None):
         self.train_time_budget = seconds
 
-    def train(self, trajs, silent=False, seed=100):
+    def train(self, trajs, seed=None):
+        if seed is not None:
+            torch.manual_seed(seed)
         X = np.concatenate([traj.obs[:-1,:] for traj in trajs])
         dY = np.concatenate([traj.obs[1:,:] - traj.obs[:-1,:] for traj in trajs])
         U = np.concatenate([traj.ctrls[:-1,:] for traj in trajs])
         XU = np.concatenate((X, U), axis = 1) # stack X and U together
         self._set_pairs(XU, dY)
         self._prepare_data()
-        self._init_train(seed)
+        self._init_train()
 
         print("Training MLP: ", end="")
         t0 = time.time()
@@ -400,14 +399,15 @@ class ARMLP(MLP):
         k = self.k
         return k*self.system.obs_dim + k*self.system.ctrl_dim
 
-    def _init_net(self, seed=100):
-        torch.manual_seed(seed)
+    def _init_net(self):
         self.net = ForwardNet(self._get_fvec_size(), self.system.obs_dim, 
             self.hidden_sizes, self.nonlintype, self.batchnorm)
         self.net = self.net.double().to(self._device)
         print(f"{self.net.parameters().__next__().device=}")
 
-    def train(self, trajs, silent=False, seed=100):
+    def train(self, trajs, silent=False, seed=None):
+        if seed is not None:
+            torch.manual_seed(seed)
         # First set up shift matrices
         A = np.zeros((self.state_dim, self.state_dim))
         B = np.zeros((self.state_dim, self.system.ctrl_dim))
@@ -438,7 +438,7 @@ class ARMLP(MLP):
         assert XU.shape[1]==self._get_fvec_size()
         self._set_pairs(XU, dY)
         self._prepare_data()
-        self._init_train(seed)
+        self._init_train()
 
         print("Training MLP: ", end="")
         t0 = time.time()

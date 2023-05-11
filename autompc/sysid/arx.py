@@ -126,7 +126,7 @@ class ARX(Model):
     def traj_to_states(self, traj):
         return self._get_all_feature_vectors(traj)[:, :-self.system.ctrl_dim]
 
-    def train(self, trajs, silent=False):
+    def train(self, trajs, seed=None):
         matrix, targets = self._get_training_matrix_and_targets(trajs)
 
         coeffs = np.zeros((self.system.obs_dim, self._get_fvec_size()))

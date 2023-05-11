@@ -19,6 +19,11 @@ Multi-layer Perceptron
 
 .. autoclass:: autompc.sysid.MLP
 
+Autoregressive Multi-layer Perceptron
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autoclass:: autompc.sysid.ARMLP
+
 Sparse Identification of Nonlinear Dynamics (SINDy)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
