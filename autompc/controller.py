@@ -426,7 +426,7 @@ class Controller(TunablePipeline,Policy):
         """
         return copy.deepcopy(self)
 
-    def build(self, trajs : List[Trajectory] = None) -> None:
+    def build(self, trajs : List[Trajectory] = None , seed=None) -> None:
         """
         Builds the controller given its current configuration.  This includes
         training the model, constructing the OPC, and initializing the optimizer.
@@ -449,7 +449,7 @@ class Controller(TunablePipeline,Policy):
         if hasattr(self.model,'trainable') and self.model.trainable:
             if trajs:
                 self.model.clear()
-                self.model.train(trajs)
+                self.model.train(trajs, seed=seed)
             elif self.model.is_trained:
                 pass
             else:
@@ -490,6 +490,7 @@ class Controller(TunablePipeline,Policy):
         from influencing current model predictions.
         """
         self.model_state = None
+        self.last_control = None
 
     def reset_optimizer(self) -> None:
         """
@@ -541,7 +542,7 @@ class Controller(TunablePipeline,Policy):
         elif not self.last_control is None:
             self.model_state = self.model.update_state(self.model_state, 
                     self.last_control, obs)
-        
+        # print(self.model_state)
         control = self.optimizer.step(self.model_state)
         self.last_control = control
 

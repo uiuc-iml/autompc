@@ -121,8 +121,8 @@ class HoldoutModelEvaluator(ModelEvaluator):
         if hasattr(holdout, "unwrap"):
             holdout = holdout.unwrap()
 
-        m.train(self.training_set)
-        metric_value = self.metric(m, self.holdout)
+        m.train(training_set)
+        metric_value = self.metric(m, holdout)
         if self.verbose:
             print("Holdout score:",metric_value)
         return metric_value
