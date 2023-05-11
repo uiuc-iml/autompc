@@ -32,10 +32,6 @@ class GenericDiffTest(ABC):
         label name to config."""
         raise NotImplementedError
 
-    @abstractmethod
-    def get_precomputed_prefix(self):
-        raise NotImplementedError
-
     def get_inputs(self, model, num_inputs=100, seed=100):
         states = []
         controls = []
@@ -61,33 +57,6 @@ class GenericDiffTest(ABC):
         dir_controls /= np.linalg.norm(dir_controls, axis=-1)[:,np.newaxis]
         return input_states, input_controls, dir_states, dir_controls
 
-    def get_precomputed(self, label):
-        fn = f"{self.get_precomputed_prefix()}_{label}_diff_states.npy"
-        precomp_diff_states = np.load(fn)
-        fn = f"{self.get_precomputed_prefix()}_{label}_diff_controls.npy"
-        precomp_diff_controls = np.load(fn)
-        return precomp_diff_states, precomp_diff_controls
-
-    def generate_precomputed(self):
-        configs = self.get_configs_to_test()
-        configs["default"] = self.model.get_default_config()
-
-        for label, config in configs.items():
-            model = self.model.clone()
-            model.set_config(config)
-            model.train(self.trajs)
-            input_states, input_controls, dir_states, dir_controls = self.get_inputs(model)
-            
-            eps = 1e-6
-            diff_states = model.pred_batch(input_states+eps*dir_states, input_controls) - model.pred_batch(input_states-eps*dir_states, input_controls)
-            diff_states /= 2*eps
-            diff_controls = model.pred_batch(input_states, input_controls+eps*dir_controls) - model.pred_batch(input_states, input_controls-eps*dir_controls)
-            diff_controls /= 2*eps
-            fn = f"{self.get_precomputed_prefix()}_{label}_diff_states.npy"
-            np.save(fn, np.array(diff_states))
-            fn = f"{self.get_precomputed_prefix()}_{label}_diff_controls.npy"
-            np.save(fn, np.array(diff_controls))
-
     def test_model_train_predict(self):
         configs = self.get_configs_to_test()
         configs["default"] = self.model.get_default_config()
@@ -97,8 +66,6 @@ class GenericDiffTest(ABC):
             model.set_config(config)
             model.train(self.trajs)
             input_states, input_controls, dir_states, dir_controls = self.get_inputs(model)
-
-            self.assertEqual(input_states.shape[1], model.state_dim)
 
             # Test Single Prediction
             preds1 = []
@@ -120,13 +87,20 @@ class GenericDiffTest(ABC):
             self.assertTrue(np.allclose(ctrl_jacs1, ctrl_jacs2))
 
             # Compare to pre-computed state_jacs and control_jacs
-            precomp_diff_states, precomp_diff_controls = self.get_precomputed(label)
+            # Finite Difference            
+            eps = 1e-6
+            diff_states = model.pred_batch(input_states+eps*dir_states, input_controls) - model.pred_batch(input_states-eps*dir_states, input_controls)
+            diff_states /= 2*eps
+            diff_controls = model.pred_batch(input_states, input_controls+eps*dir_controls) - model.pred_batch(input_states, input_controls-eps*dir_controls)
+            diff_controls /= 2*eps
+            self.assertEqual(input_states.shape[1], model.state_dim)
+
 
             for i, (dir_state, state_jac1) in enumerate(zip(dir_states, state_jacs1)):
-                self.assertTrue(np.allclose((dir_state@state_jac1.T), precomp_diff_states[i]))
+                self.assertTrue(np.allclose((dir_state@state_jac1.T), diff_states[i]))
 
             for i, (dir_control, control_jac1) in enumerate(zip(dir_controls, ctrl_jacs1)):
-                self.assertTrue(np.allclose((dir_control@control_jac1.T), precomp_diff_controls[i]))
+                self.assertTrue(np.allclose((dir_control@control_jac1.T), diff_controls[i]))
                 
         print('All tests successfully completed')
 
@@ -145,9 +119,6 @@ class MLPTest(GenericDiffTest, unittest.TestCase):
                 "tanh" : tanh_config,
                 "sigmoid" : sigmoid_config}
 
-    def get_precomputed_prefix(self):
-        return "precomputed/mlp"
-
 class ARMLPTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
         return ARMLP(system)
@@ -162,18 +133,12 @@ class ARMLPTest(GenericDiffTest, unittest.TestCase):
         return {"relu" : relu_config,
                 "tanh" : tanh_config,
                 "sigmoid" : sigmoid_config}
-    def get_precomputed_prefix(self):
-        return "precomputed/armlp"
-
 class ARXTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
         return ARX(system)
 
     def get_configs_to_test(self):
         return dict()
-
-    def get_precomputed_prefix(self):
-        return "precomputed/arx"
 
 class SINDyTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -201,18 +166,12 @@ class SINDyTest(GenericDiffTest, unittest.TestCase):
                 "trig_and_poly" : trig_and_poly_config
                 }
 
-    def get_precomputed_prefix(self):
-        return "precomputed/sindy"
-
 class ApproximateGPTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
         return ApproximateGPModel(system)
 
     def get_configs_to_test(self):
         return dict()
-
-    def get_precomputed_prefix(self):
-        return "precomputed/approxgp"
 
 class KoopmanTest(GenericDiffTest, unittest.TestCase):
     def get_model(self, system):
@@ -254,30 +213,3 @@ class KoopmanTest(GenericDiffTest, unittest.TestCase):
                 "trig_and_poly" : trig_and_poly_config,
                 "stable" : stable_config,
                 "lasso" : lasso_config}
-
-    def get_precomputed_prefix(self):
-        return "precomputed/koopman"
-
-if __name__ == "__main__":
-    if sys.argv[1] == "precompute" or sys.argv[1] == "test":
-        if sys.argv[2] == "mlp":
-            test = MLPTest()
-        elif sys.argv[2] == "armlp":
-            test= ARMLPTest()
-        elif sys.argv[2] == "arx":
-            test = ARXTest()
-        elif sys.argv[2] == "sindy":
-            test = SINDyTest()
-        elif sys.argv[2] == "approxgp":
-            test = ApproximateGPTest()
-        elif sys.argv[2] == "koopman":
-            test = KoopmanTest()
-        else:
-            raise ValueError("Unknown model")
-        test.setUp()
-        if sys.argv[1] == "precompute":
-            test.generate_precomputed()
-        test.test_model_train_predict()
-
-    else:
-        raise ValueError("Unknown command")
