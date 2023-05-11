@@ -3,6 +3,9 @@ import numpy as np
 from .cost import Cost
 
 class TrackingCost(Cost):
+    """
+    Time Varying Cost Wrapper
+    """
     def __init__(self, system, cost, goal=None, **properties):
         """
         Create tracking cost cost.  Cost is:
@@ -37,10 +40,10 @@ class TrackingCost(Cost):
         self.goal = goal
         self.properties['goal'] = np.copy(goal)
         
-        self.properties['quad'] = self.is_quad
-        self.properties['convex'] = self.is_convex
-        self.properties['diff'] = self.is_diff
-        self.properties['twice_diff'] = self.is_twice_diff
+        self.properties['quad'] = self._cost.is_quad
+        self.properties['convex'] = self._cost.is_convex
+        self.properties['diff'] = self._cost.is_diff
+        self.properties['twice_diff'] = self._cost.is_twice_diff
 
     def incremental(self, obs, control, t):
         self._cost.set_goal(self.goal[t])
