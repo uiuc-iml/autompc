@@ -57,14 +57,15 @@ class Model(Tunable,Dynamics):
         """
         raise NotImplementedError
 
-    def train(self, trajs : List[Tuple], silent=False) -> None:
+    def train(self, trajs : List[Tuple], seed=None) -> None:
         """
         Parameters
         ----------
             trajs : List of pairs (xs, us)
                 Training set of trajectories
-            silent : bool
-                Silence progress bar output
+            seed : int
+                Seed for random number generator. If None doesn't re-seed
+                the random number generator.
 
         Only implemented for trainable models. Subclasses should mark
         self.is_trained = True

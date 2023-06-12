@@ -146,8 +146,7 @@ class ApproximateGPModel(FullyObservableModel):
         self.train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         self.induce = torch.stack([train_x[:self.induce_count] for _ in range(self.num_task)], dim=0)
 
-    def _init_train(self, seed):
-        torch.manual_seed(seed)
+    def _init_train(self):
         self.gpmodel = ApproximateGPytorchModel(self.induce, self.num_task).double()
         self.gpmodel = self.gpmodel.to(self.device)
 
@@ -185,8 +184,11 @@ class ApproximateGPModel(FullyObservableModel):
     def set_train_budget(self, seconds=None):
         self.train_time_budget = seconds
 
-    def train(self, trajs, silent=False, seed=100):
+    def train(self, trajs, seed=None):
         """Given collected trajectories, train the GP to approximate the actual dynamics"""
+        if seed is not None:
+            torch.manual_seed(seed)
+
         # extract transfer pairs from data
         X = np.concatenate([traj.obs[:-1,:] for traj in trajs])
         dY = np.concatenate([traj.obs[1:,:] - traj.obs[:-1,:] for traj in trajs])
@@ -194,12 +196,12 @@ class ApproximateGPModel(FullyObservableModel):
         XU = np.concatenate((X, U), axis = 1) # stack X and U together
         self._set_pairs(XU, dY)
         self._prepare_data()
-        self._init_train(seed)
+        self._init_train()
 
-        if silent:
-            itr = range(self.n_train_iters)
-        else:
-            itr = tqdm.tqdm(range(self.n_train_iters))
+        #if silent:
+        #    itr = range(self.n_train_iters)
+        #else:
+        itr = tqdm.tqdm(range(self.n_train_iters))
         t0 = time.time()
         for i in itr:
             self._step_train()

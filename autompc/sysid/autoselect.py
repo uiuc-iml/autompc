@@ -62,11 +62,10 @@ class AutoSelectModel (Model, TunablePipeline):
     def models(self) -> List[Model]:
         return self._components['model']
 
-    def train(self, trajs):
+    def train(self, trajs, seed=None):
         if self.selected_model is None:
             raise RuntimeError("Must set a valid model configuration before training")
-        self.selected_model.train(trajs)
-        self.is_trained = self.selected_model.is_trained
+        self.selected_model.train(trajs,seed=seed)
 
     def set_train_budget(self, seconds=None):
         self.train_time_limit = seconds
