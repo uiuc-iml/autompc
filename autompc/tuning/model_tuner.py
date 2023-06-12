@@ -129,7 +129,7 @@ class ModelTuner:
         self.meta_learning = meta_learning
         self.portfolio = None 
         
-        # Load portfolio file
+        # Load portfolio file for meta learning
         if self.meta_learning:
             portfolio_file = '/scratch/bbqi/baoyul2/autompc/autompc/model_metalearning/meta_portfolio' #TODO: change to relative path
             portfolio = load_portfolio(portfolio_file, portfolio_size)

@@ -7,6 +7,7 @@ meta_data
 figs
 examples
 sbatch_out*
+data
 
 .vscode/
 .venv/

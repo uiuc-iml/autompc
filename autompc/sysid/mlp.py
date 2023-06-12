@@ -185,10 +185,15 @@ class MLP(FullyObservableModel):
         self.dy_means = np.mean(self.dY, axis=0)
         self.dy_std = np.std(self.dY, axis=0)
         self.dy_std[self.dy_std == 0.0] = 1.0 # Avoid division by zero
-        dYt = transform_input(self.dy_means, self.dy_std, self.dY)
+        dYt = transform_input(self.dy_means, self.dy_std, self.dY) #TODO transform output?
         feedX = XUt
         predY = dYt
+        # print('X',np.asarray(feedX).shape) # (190,24)
+        # print('Y',np.asarray(predY).shape) # (190,18)
+        # exit()
         dataset = SimpleDataset(feedX, predY)
+        # print(dataset)
+        # exit()
         self.dataloader = DataLoader(dataset, batch_size=self.n_batch, shuffle=True)
 
     def _init_train(self, seed):
@@ -204,6 +209,9 @@ class MLP(FullyObservableModel):
     def _step_train(self):
         cum_loss = 0.0
         for i, (x, y) in enumerate(self.dataloader):
+            # print('x',x.size()) # [64,24]
+            # print('y',y.size()) # [64,18]
+            # exit()
             self.optim.zero_grad()
             x = x.to(self._device)
             predy = self.net(x)
