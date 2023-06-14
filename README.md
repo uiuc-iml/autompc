@@ -8,6 +8,8 @@ AutoMPC can
 To see AutoMPC in action, check out this [example](https://htmlpreview.github.io/?https://github.com/williamedwards/autompc/blob/main/examples/0_MainDemo.html)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1CNil-Cq24AjVtoArgWOW0ZvLNB-zcyGW).
 
+**NOTE: we are doing a lot of development on the 0.2-dev Github branch and it is mostly stable. We plan to release it soon, and it has major API changes so please switch over as soon as you can!**
+
 ## Why AutoMPC?
 
 System ID and Model Predictive Control are powerful tools for building robot controllers, 
