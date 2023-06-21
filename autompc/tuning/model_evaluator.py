@@ -9,7 +9,8 @@ from ConfigSpace import Configuration
 from ..sysid.metrics import get_model_rmse,get_model_rmsmens
 from ..trajectory import Trajectory
 from ..sysid.model import Model
-from .parallel_utils import SerialBackend
+from .parallel_utils import SerialBackend,ParallelBackend
+from .data_store import DataStore,MemoryDataStore
 
 class ModelEvaluator(ABC):
     """
@@ -60,10 +61,6 @@ class ModelEvaluator(ABC):
         """
         raise NotImplementedError
 
-    def set_data_store(self, data_store):
-        self._data_store = data_store
-
-
 
 class HoldoutModelEvaluator(ModelEvaluator):
     """
@@ -107,22 +104,11 @@ class HoldoutModelEvaluator(ModelEvaluator):
             if traj not in self.holdout:
                 self.training_set.append(traj)
 
-    def set_data_store(self, data_store):
-        super().set_data_store(data_store)
-        self.holdout = data_store.wrap(self.holdout)
-        self.training_set = data_store.wrap(self.training_set)
-
     def __call__(self, model):
         m = model.clone()
-        training_set = self.training_set
-        holdout = self.holdout
-        if hasattr(training_set, "unwrap"):
-            training_set = training_set.unwrap()
-        if hasattr(holdout, "unwrap"):
-            holdout = holdout.unwrap()
 
-        m.train(training_set)
-        metric_value = self.metric(m, holdout)
+        m.train(self.training_set)
+        metric_value = self.metric(m, self.holdout)
         if self.verbose:
             print("Holdout score:",metric_value)
         return metric_value
@@ -132,7 +118,9 @@ class CrossValidationModelEvaluator(ModelEvaluator):
     """
     Evaluate model prediction accuracy according to k-fold cross validation.
     """
-    def __init__(self, *args, rng = None, num_folds = 3, verbose=False, parallel_backend=None, **kwargs):
+    def __init__(self, *args, rng = None, num_folds = 3, verbose=False,
+                 parallel_backend : ParallelBackend = None,
+                 data_store : DataStore=None, **kwargs):
         """
         Parameters
         ----------
@@ -152,6 +140,8 @@ class CrossValidationModelEvaluator(ModelEvaluator):
             Whether to print information during evaluation
         parallel_backend : ParallelBackend
             Backend to use to compute folds in parallel.
+        data_store : DataStore
+            DataStore to use to store folds for parallel evaluation.
         """
         if num_folds <= 1:
             raise ValueError("Invalid number of folds")
@@ -171,17 +161,16 @@ class CrossValidationModelEvaluator(ModelEvaluator):
 
         if parallel_backend is None:
             parallel_backend = SerialBackend()
+            if data_store is None:
+                data_store = MemoryDataStore()
+        self.data_store = data_store
+        if self.data_store is None:
+            raise ValueError("Must provide a DataStore for parallel evaluation")
         self.parallel_backend = parallel_backend
 
-    def set_data_store(self, data_store):
-        super().set_data_store(data_store)
-        self.folds = [data_store.wrap(fold) for fold in self.folds]
-
     def _run_fold(self, model, fold):
-        if hasattr(fold, "unwrap"):
-            fold = fold.unwrap()
-        if hasattr(model, "unwrap"):
-            model = model.unwrap()
+        fold = fold.unwrap()
+        model = model.unwrap()
         train, test = fold
         m = model.clone()
         m.train(train)
@@ -189,7 +178,7 @@ class CrossValidationModelEvaluator(ModelEvaluator):
         return metric_value
 
     def __call__(self, model):
-        values = self.parallel_backend.map(partial(self._run_fold, model), self.folds)
+        values = self.parallel_backend.map(partial(self._run_fold, self.data_store.wrap(model)), [self.data_store.wrap(f) for f in self.folds])
         if self.verbose:
             print("Cross-validation values:",values)
         return np.mean(values)
