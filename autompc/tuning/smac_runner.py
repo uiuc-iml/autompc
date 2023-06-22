@@ -8,7 +8,6 @@ from smac.runhistory.runhistory import RunHistory
 from smac.stats.stats import Stats
 from smac.utils.io.traj_logging import TrajLogger
 from pathlib import Path
-from .data_store import DataStore
 import multiprocessing
 import contextlib
 import datetime
@@ -17,6 +16,9 @@ import pickle
 import time
 import queue
 import sys
+import os
+import glob
+import shutil
 
 
 CfgEvaluator = Callable[[Configuration], Tuple[float, Dict[str, Any]]]
@@ -37,7 +39,7 @@ class SMACRunner:
         restore_run_dir = self._get_restore_run_dir()
         with open(os.path.join(restore_run_dir, "cfg_evaluator.pkl"), "rb") as f:
             cfg_evaluator = pickle.load(f)
-        return cfg_evlauator
+        return cfg_evaluator
 
     def _init_output_directories(self): #, cfg_evaluator):
         # Construct output paths
@@ -60,12 +62,10 @@ class SMACRunner:
         (smac_dir / "run_1").mkdir(exist_ok=True)
         data_dir.mkdir(exist_ok=True)
 
-        # Create data store
-        self._data_store = DataStore(data_dir)
-
         self.run_dir = run_dir
         self.smac_dir = smac_dir
         self.eval_result_dir = eval_result_dir
+        self.data_dir = data_dir
     
     def _get_restore_run_dir(self):
         run_dirs = glob.glob(os.path.join(self.restore_dir, "run_*"))
@@ -76,6 +76,7 @@ class SMACRunner:
 
     def _load_smac_restore_data(self, scenario):
         # Load runhistory
+        restore_run_dir = self._get_restore_run_dir()
         rh_path = os.path.join(restore_run_dir, "smac", "run_1", "runhistory.json")
         runhistory = RunHistory()
         runhistory.load_json(rh_path, scenario.cs)
@@ -99,9 +100,6 @@ class SMACRunner:
         old_traj = os.path.join(restore_run_dir, "smac", "run_1", "traj_aclib2.json")
         new_traj = os.path.join(new_run_dir, "smac", "run_1", "traj_aclib2.json")
         shutil.copy(old_traj, new_traj)
-
-    def get_data_store(self):
-        return self._data_store
 
     def run(self, cs: ConfigurationSpace, cfg_evaluator: CfgEvaluator, n_iters: int, rng: np.random.Generator, eval_timeout: float):
         smac_rng = np.random.RandomState(seed=rng.integers(1 << 31))
@@ -134,11 +132,12 @@ class SMACRunner:
                     run_id = 1
                     )
         else:
+            raise RuntimeError("Restore not implemented yet")
             self._copy_restore_data()
             runhistory, stats, incumbent = self._load_smac_restore_data(restore_run_dir, scenario)
             smac = SMAC4HPO(scenario=scenario, rng=smac_rng,
                     initial_design=initial_design,
-                    tae_runner=eval_cfg,
+                    tae_runner=cfg_runner,
                     run_id = 1,
                     runhistory=runhistory,
                     stats=stats,

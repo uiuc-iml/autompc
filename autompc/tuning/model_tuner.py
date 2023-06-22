@@ -14,6 +14,7 @@ from .smac_runner import SMACRunner
 import ConfigSpace as CS
 
 from .model_evaluator import CrossValidationModelEvaluator, HoldoutModelEvaluator, ModelEvaluator
+from .data_store import DataStore, FileDataStore
 from ..system import System
 from ..trajectory import Trajectory
 from ..sysid.model import Model
@@ -159,8 +160,6 @@ class ModelTuner:
         """
         Run tuning process
 
-        TODO Update docstring
-
         Parameters
         ----------
         rng : numpy.random.Generator
@@ -169,23 +168,29 @@ class ModelTuner:
         n_iters : int
             Number of tuning iterations to run
         
-        min_train_time : float
-            Initial amount of time allocated to train models. In multi-fidelity mode,
-            default will use 10s.
-
-        max_train_time : float
-            Maximum amount of time allocated to train models. In multi-fidelity mode,
-            default will use 180s.
+        output_dir : str
+            Where to store the output of SMAC.
+        
+        restore_dir : str
+            Whether to restore a prior run of SMAC.
         
         retrain_full : bool
-            Whether we should retrain after tuning.
+            Whether we should retrain on the full dataset after tuning.
+
+        eval_timeout : float
+            Maximum amount of time allocated to train a model. In multi-fidelity mode,
+            default will use 180s.
+        
+        use_default_initial_design : bool
+            Whether to use the default initial design for SMAC.  If False, will choose
+            a random initial design.
 
         Returns
         -------
         model : Model
             Resulting model
 
-        tune_result : ModelTuneResult
+        tune_result : ModelTunerResult
             Additional information from tuning process.  Can access
             tune_result.inc_cfg to reconsruct the model.
         """
@@ -194,13 +199,16 @@ class ModelTuner:
             restore_dir=restore_dir,
             use_default_initial_design=use_default_initial_design
         )
-        data_store = smac_runner.get_data_store()
 
         if rng is None:
             rng = np.random.default_rng()
 
+        # Create data store
         self.evaluator.rng = rng # TODO Fix this
-        self.evaluator.set_data_store(data_store)
+        # TODO: somewhat hacky way to set the data store directory
+        if hasattr(self.evaluator, "data_store") and isinstance(self.evaluator,FileDataStore):
+            self.evaluator.data_store.set_dir(smac_runner.data_dir)
+
         cfg_evaluator = ModelCfgEvaluator(self.model, self.evaluator)
 
         cs = self.model.get_config_space()

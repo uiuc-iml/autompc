@@ -434,8 +434,6 @@ class Controller(TunablePipeline,Policy):
         If the seed is None, the controller's components that are susceptible to
         randomness (e.g., model training) will be built using current random seeds.
         """
-        if hasattr(trajs, "unwrap"):
-            trajs = trajs.unwrap()
         if not self.ocp:
             raise ControllerStateError("Must call set_ocp() before build()")
         if not self.model:

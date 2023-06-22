@@ -15,8 +15,6 @@ ControlEvaluationTrial = namedtuple("ControlEvaluationTrial", ["policy","task","
     "cost","traj","term_cond","eval_time"])
 
 def trial_to_json(trial : ControlEvaluationTrial):
-    if hasattr(trial, "unwrap"):
-        trial = trial.unwrap()
     res = trial._asdict()
     res['policy'] = str(trial.policy)
     res['task'] = str(trial.task)
@@ -53,8 +51,6 @@ class ControlEvaluator(ABC):
             
         results = []
         for i, task in enumerate(self.tasks):
-            if hasattr(policy,"unwrap"):
-                policy = policy.unwrap()
             if hasattr(policy,'set_ocp'):  #it's a Controller
                 policy.set_ocp(self.tasks[i])
             policy.reset()
@@ -114,24 +110,12 @@ class StandardEvaluator(ControlEvaluator):
         tasks: the task or set of tasks to evaluate on.
         dynamics (Dynamics): the assumed dynamics for simulation.
     """
-    def __init__(self, system, tasks, dynamics, prefix='', data_store=None):
+    def __init__(self, system : System, tasks, dynamics : Dynamics):
         super().__init__(system, tasks)
-        self.prefix = prefix
-        self.data_store = data_store
-        if data_store:
-            self.dynamics = data_store.wrap(dynamics)
-        else:
-            self.dynamics = dynamics
-
-    def evaluate_for_task(self, controller : Policy, task : Task):
+        self.dynamics = dynamics
+        
+    def evaluate_for_task(self, controller : Policy, task : Task) -> ControlEvaluationTrial:
         print("Simulating Trajectory...",end='')
-        dynamics = self.dynamics
-        if hasattr(dynamics, "unwrap"):
-            dynamics = dynamics.unwrap()
-        if hasattr(controller, "unwrap"):
-            controller = controller.unwrap()
-        res = self.evaluate_for_task_dynamics(controller,task,dynamics)
+        res = self.evaluate_for_task_dynamics(controller,task,self.dynamics)
         print("Resulting cost",res.cost)
-        if self.data_store:
-            res = self.data_store.wrap(res)
         return res

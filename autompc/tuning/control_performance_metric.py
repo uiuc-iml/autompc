@@ -10,8 +10,6 @@ class ControlPerformanceMetric:
     def __call__(self,trials : List[ControlEvaluationTrial]) -> float:
         trial_costs = []
         for t in trials:
-            if hasattr(t, "unwrap"):
-                t = t.unwrap()
             trial_costs.append([t.cost])
         return np.mean(trial_costs)
 
@@ -43,8 +41,6 @@ class ConfidenceBoundPerformanceMetric(ControlPerformanceMetric):
     def __call__(self,trials : List[ControlEvaluationTrial]) -> float:
         costs = []
         for t in trials:
-            if hasattr(t, "unwrap"):
-                t = t.unwrap()
             c = t.cost + self.eval_time_weight*t.eval_time/len(t.traj)
             if t.term_cond.endswith('infeasible'):
                 c += self.infeasible_cost

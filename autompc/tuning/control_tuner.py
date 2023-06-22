@@ -9,22 +9,24 @@ import datetime
 import time
 import os, sys, glob, shutil
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Tuple, Union
+from functools import partial
 
 # Internal project include
 from ..task import Task
 from ..sysid.model import Model
 from ..sysid.autoselect import AutoSelectModel
 from ..controller import Controller
+from ..system import System
 from ..trajectory import Trajectory
 from ..dynamics import Dynamics
 from .model_tuner import ModelTuner, ModelTunerResult
 from .model_evaluator import ModelEvaluator
 from .control_evaluator import ControlEvaluator, StandardEvaluator, ControlEvaluationTrial, trial_to_json
 from .control_performance_metric import ControlPerformanceMetric,ConfidenceBoundPerformanceMetric
-from .bootstrap_evaluator import BootstrapSurrogateEvaluator
 from .smac_runner import SMACRunner
-from .data_store import DataStore
+from .data_store import DataStore, FileDataStore, WrappedData
+from .parallel_utils import ParallelBackend,SerialBackend
 from .parallel_evaluator import ParallelEvaluator
 
 # External library includes
@@ -99,15 +101,15 @@ PipelineTuneResult contains information about a tuning process.
 #autoselect_factories = [MLPFactory, SINDyFactory, ApproximateGPModelFactory,
 #        ARXFactory, KoopmanFactory]
 
-def get_tune_result(cfg_evaluator, runhistory):
+def get_tune_result(surr_tune_history, control_tune_history):
     cfgs, inc_cfgs, costs, inc_costs, truedyn_costs, inc_truedyn_costs, \
         surr_infos, truedyn_infos =  [], [], [], [], [], [], [], []
     inc_cost = float("inf")
     inc_cfg = None
 
-    for key, val in runhistory.data.items():
+    for key, val in control_tune_history.data.items():
         #parse additional data from additional_info dict
-        cfg = runhistory.ids_config[key.config_id]
+        cfg = control_tune_history.ids_config[key.config_id]
         if not val.additional_info:
             continue
         if val.cost < inc_cost:
@@ -125,8 +127,8 @@ def get_tune_result(cfg_evaluator, runhistory):
             truedyn_costs.append(val.additional_info["truedyn_cost"])
             truedyn_infos.append(val.additional_info["truedyn_info"])
 
-    if cfg_evaluator:
-        surr_tune_result = cfg_evaluator.surr_tune_result
+    if surr_tune_history:
+        surr_tune_result = surr_tune_history[-1]
     else:
         surr_tune_result = None
 
@@ -181,9 +183,9 @@ class ControlTuner:
     In other words, the arguments `surrogate_` map directly to the arguments of
     ModelTuner.
 
-    The cross-simulation method by default runs a HoldoutSurrogateEvaluator
-    with a holdout fraction of control_tune_holdout. A BootstrapSurrogateEvaluator
-    will run many surrogates, and can be activated using control_tune_boostraps > 1.
+    The cross-simulation method by default runs a StandardEvaluator.  If
+    control_tune_boostraps > 1, multiple surrogates are tuned and a ParallelEvaluator
+    evaluates the cartesian product of all tasks and .
     To completely override this behavior, specify control_evaluator=X. 
     
     The performance metric is encapsulated by a ControlPerformanceMetric subclass. 
@@ -200,7 +202,7 @@ class ControlTuner:
             surrogate_evaluator : Optional[ModelEvaluator]=None,
             control_tune_bootstraps=1, max_trials_per_evaluation=None, control_evaluator : Optional[ControlEvaluator]=None,
             performance_quantile=0.5, performance_eval_time_weight=0.0, performance_infeasible_cost=100.0,
-            performance_metric : Optional[ControlPerformanceMetric]=None, parallel_backend=None): 
+            performance_metric : Optional[ControlPerformanceMetric]=None, parallel_backend : ParallelBackend = None): 
         """
         Parameters
         ----------
@@ -234,7 +236,7 @@ class ControlTuner:
         control_tune_bootstraps : int
             If > 1 and control_evaluator = None, will use a
             BootstrapControlEvaluator. Otherwise will use a
-            SurrogateControlEvaluator.
+            StandardControlEvaluator.
         max_trials_per_evaluation : int
             If given and control_evaluator = None, at most this # of tasks and 
             surrogates will be evaluated.
@@ -253,7 +255,9 @@ class ControlTuner:
         performance_metric : ControlPerformanceMetric
             Overrides the default ConfidenceBoundPerformanceMetric and ignores the
             prior settings.
-        parallel_backend : TODO
+        parallel_backend : ParallelBackend
+            Uses a specific parallel backend for parallelization.  If None, uses
+            SerialBackend.
         """
         self.tuning_mode = tuning_mode
         self.surrogate = surrogate
@@ -272,15 +276,100 @@ class ControlTuner:
             # performance_metric = ControlPerformanceMetric()
         self.performance_metric = performance_metric
         self.parallel_backend = parallel_backend
+        if self.parallel_backend is None:
+            self.parallel_backend = SerialBackend()
 
-    def _get_cfg_evaluator(self, controller : Controller, task : List[Task], trajs : List[Trajectory],
-                            truedyn : Optional[Dynamics], rng, surrogate_tune_iters : int, data_store: DataStore):
+    def _prepare_surrogates(self, system : System, surr_trajs : List[Trajectory],
+                            rng, surrogate_tune_iters : int,
+                            data_store: DataStore) -> Tuple[List[WrappedData],Optional[ModelTunerResult]]:
+        #Surrogate options
+        # 1. Surrogate provided as fixed dynamics model or trained model.
+        #    Bootstrap evaluation not enabled.
+        # 2. Surrogate provided as fixed (tuned?) model class but untrained model.
+        #    In this case, we need to train the surrogate OR use bootstrap evaluator
+        #    to train multiple surrogates.
+        # 3. Surrogate provided as un-tuned model or None (latter case we auto-select).
+        #    In this case, we need to tune the surrogate.  We can train the surrogate
+        #    OR use bootstrap evaluator to train multiple surrogates.
+        #
+        # Result:
+        #    One or more trained, wrapped Models used for surrogates
         surrogate = self.surrogate
         if surrogate is None:
-            surrogate = AutoSelectModel(controller.system)
+            surrogate = AutoSelectModel(system)
+        trained_wrapped_surrogates = []
+        tune_result = None
+        
+        if (isinstance(surrogate, Dynamics) and not isinstance(surrogate, Model)) or surrogate.is_trained:
+            print("------------------------------------------------------------------")
+            print("Skipping surrogate tuning, surrogate is a trained model")
+            print("------------------------------------------------------------------")
+            trained_wrapped_surrogates = [data_store.wrap(surrogate)]
+        else:
+            if surrogate.is_tunable():
+                # Run surrogate tuning
+                print("------------------------------------------------------------------")
+                print("Beginning surrogate tuning with model class",surrogate.name)
+                print("------------------------------------------------------------------")
+                tuner = ModelTuner(system, surr_trajs, surrogate, eval_holdout=self.surrogate_tune_holdout, eval_folds=self.surrogate_tune_folds,
+                    eval_metric=self.surrogate_tune_metric,eval_horizon=self.surrogate_tune_horizon,eval_quantile=self.surrogate_tune_quantile,evaluator=self.surrogate_evaluator)
+                model, tune_result = tuner.run(rng, surrogate_tune_iters, retrain_full=False)
+                print("------------------------------------------------------------------")
+                print("Auto-tuned surrogate model class:")
+                print(tune_result.inc_cfg)
+                print("Cost",tune_result.inc_costs[-1])
+                print("------------------------------------------------------------------")
+                surrogate = model
+            else:
+                # No need for surrogate tuning, but would need training
+                pass
+        
+        if self.control_tune_bootstraps > 1:
+            def _train_bootstrap(bootstrap_sample: WrappedData, base_surrogate: WrappedData, data_store: DataStore):
+                bootstrap_sample = bootstrap_sample.unwrap()
+                base_surrogate = base_surrogate.unwrap()
+                bootstrap_surrogate = base_surrogate.clone()
+                bootstrap_surrogate.train(bootstrap_sample)
+                bootstrap_surrogate = data_store.wrap(bootstrap_surrogate)
+                return bootstrap_surrogate
+
+            #perform bootstrap sample to create surrogate ensemble
+            population = np.empty(len(surr_trajs), dtype=object)
+            for i, traj in enumerate(surr_trajs):
+                population[i] = surr_trajs
+            bootstrap_samples = []
+            for i in range(self.control_tune_bootstraps):
+                bootstrap_samples.append(data_store.wrap(rng.choice(population, len(surr_trajs), replace=True, axis=0)))
+            surrogate_dynamics = self.parallel_backend.map(partial(_train_bootstrap, base_surrogate=data_store.wrap(surrogate), data_store=data_store), bootstrap_samples)
+            trained_wrapped_surrogates = surrogate_dynamics #already wrapped!
+        else:
+            surrogate.train(surr_trajs)
+            trained_wrapped_surrogates = [data_store.wrap(surrogate)]
+
+        return trained_wrapped_surrogates,tune_result
+
+        
+    def _get_cfg_evaluator(self, controller : Controller, tasks : List[Task], trajs : List[Trajectory],
+                            truedyn : Optional[Dynamics], rng, surrogate_tune_iters : int, data_store: DataStore):
+        # After setting up surrogate, can either have one or more tuned surrogate models.
+        # May also have true dynamics (used just for benchmarking, not available in real
+        # systems).
+        #
+        # Controller tuning options
+        # 1. Two-stage tuning: tune the controller's model first, then tune the cost and optimizer
+        # 2. End-to-end tuning: tune the controller's model, cost, and optimizer all at once 
+        #
+        # The config evaluator will accept:
+        # 1. The one or more surrogates
+        # 2. The optional true dynamics
+        # 3. Either A) a controller with a fixed model, or B) a controller with a free model + tuning trajectories
+        # 4. Information about parallel processing context.
+        #
+        # It needs to be able to be run in a Multiprocessing instance.
         control_evaluator = self.control_evaluator
         surrogate_split = self.surrogate_split
-        if (isinstance(surrogate, Dynamics) and not isinstance(surrogate, Model)) or surrogate.is_trained:
+        surrogate = self.surrogate
+        if surrogate is not None and ((isinstance(surrogate, Dynamics) and not isinstance(surrogate, Model)) or surrogate.is_trained):
             # No need for surrogate training or tuning
             surrogate_split = 0.0
         
@@ -290,73 +379,23 @@ class ControlTuner:
         surr_trajs = shuffled_trajs[:surr_size]
         sysid_trajs = shuffled_trajs[surr_size:]
 
-        tuning_data = dict()
-        tuning_data["controller"] = controller
-        tuning_data["performance_metric"] = self.performance_metric
-        tuning_data["sysid_trajs"] = sysid_trajs
-
-        if (isinstance(surrogate, Dynamics) and not isinstance(surrogate, Model)) or surrogate.is_trained:
-            print("------------------------------------------------------------------")
-            print("Skipping surrogate tuning, surrogate is a trained model")
-            print("------------------------------------------------------------------")
-            if control_evaluator is None:
-                control_evaluator = StandardEvaluator(controller.system, task, surrogate, 'surr_', data_store=data_store)
-            else:
-                assert not isinstance(control_evaluator,BootstrapSurrogateEvaluator),'Need an evaluator that does not train'
-        else:
-            if surrogate.is_tunable():
-                # Run surrogate tuning
-                print("------------------------------------------------------------------")
-                print("Beginning surrogate tuning with model class",surrogate.name)
-                print("------------------------------------------------------------------")
-                tuner = ModelTuner(controller.system, surr_trajs, surrogate, eval_holdout=self.surrogate_tune_holdout, eval_folds=self.surrogate_tune_folds,
-                    eval_metric=self.surrogate_tune_metric,eval_horizon=self.surrogate_tune_horizon,eval_quantile=self.surrogate_tune_quantile,evaluator=self.surrogate_evaluator)
-                model, tune_result = tuner.run(rng, surrogate_tune_iters, retrain_full=False)
-                print("------------------------------------------------------------------")
-                print("Auto-tuned surrogate model class:")
-                print(tune_result.inc_cfg)
-                print("Cost",tune_result.inc_costs[-1])
-                print("------------------------------------------------------------------")
-                tuning_data['surr_tune_result'] = tune_result
-                surrogate = model
-            else:
-                # No need for surrogate tuning, but would need training
-                pass
+        wrapped_surrogates,train_surr_info = self._prepare_surrogates(controller.system,surr_trajs,rng,surrogate_tune_iters,data_store)
         
-            if control_evaluator is None:
-                if self.control_tune_bootstraps > 1:
-                    control_evaluator = BootstrapSurrogateEvaluator(
-                        controller.system, task, surrogate, surr_trajs, self.control_tune_bootstraps, rng=rng, backend=self.parallel_backend, data_store=data_store
-                    )
-                else:
-                    surrogate.train(surr_trajs)
-                    control_evaluator = StandardEvaluator(controller.system, task, surrogate, prefix='surr_', data_store=data_store)
-            else:
-                if isinstance(control_evaluator,StandardEvaluator):
-                    surrogate.train(surr_trajs)
-                    control_evaluator.dynamics = surrogate
-                else:
-                    raise NotImplementedError("Not sure what to do when control_evaluator != None and surrogate is tuned?")
-
         if truedyn is not None:
-            truedyn_standard_evaluator = StandardEvaluator(controller.system, task, dynamics = truedyn, prefix='truedyn_')
-            truedyn_evaluator = ParallelEvaluator(evaluator=truedyn_standard_evaluator,
-                dynamics = truedyn,
-                backend=self.parallel_backend,
-                data_store=data_store
-            )
+            wrapped_truedyn = data_store.wrap(truedyn)
         else:
-            truedyn_evaluator = None
-        
+            wrapped_truedyn = None
+
         if self.tuning_mode == 'twostage':
             #tune the model if not already tuned by surrogate tuning
             print("------------------------------------------------------------------")
             print("Beginning two-stage tuning")
             print("------------------------------------------------------------------")
-            if 'surr_tune_result' in self.tuning_mode and isinstance(surrogate,AutoSelectModel):
+            if surrogate is None or isinstance(self.surrogate,AutoSelectModel):
                 print("Reusing surrogate model tuning for SysID model to save time")
-                model = surrogate
+                model = wrapped_surrogates[0].unwrap()
             else:
+                surrogate = wrapped_surrogates[0].unwrap()
                 print("Tuning MPC model")
                 tuner = ModelTuner(controller.system, trajs, surrogate, eval_holdout=self.surrogate_tune_holdout, eval_folds=self.surrogate_tune_folds,
                     eval_metric=self.surrogate_tune_metric,eval_horizon=self.surrogate_tune_horizon,eval_quantile=self.surrogate_tune_quantile,evaluator=self.surrogate_evaluator)
@@ -370,13 +409,21 @@ class ControlTuner:
             controller.set_model_hyper_values(model.name,**model.get_config())
             print()
 
+        if control_evaluator is not None:
+            control_evaluator.tasks = tasks
+            control_evaluator.dynamics = wrapped_surrogates
+        
         cfg_evaluator = ControlCfgEvaluator(
-            controller=controller,
+            controller=data_store.wrap(controller),
+            tasks=tasks,
             performance_metric=self.performance_metric,
-            sysid_trajs=sysid_trajs,
+            sysid_trajs=data_store.wrap(sysid_trajs),
             control_evaluator=control_evaluator,
-            truedyn_evaluator=truedyn_evaluator,
+            surrogate_models=wrapped_surrogates,
+            truedyn=wrapped_truedyn,
+            paralle_backend=self.parallel_backend,
             data_store=data_store,
+            train_surr_info=train_surr_info
         )
 
         return cfg_evaluator
@@ -384,8 +431,7 @@ class ControlTuner:
 
     def run(self, controller, tasks, trajs, n_iters, rng, truedyn=None, 
             surrogate_tune_iters=100, eval_timeout=600, output_dir=None, restore_dir=None,
-            save_all_controllers=False, use_default_initial_design=True,
-            debug_return_evaluator=False, max_eval_jobs=1):
+            save_all_controllers=False, use_default_initial_design=True):
         """
         Run tuning.
 
@@ -439,7 +485,7 @@ class ControlTuner:
         """
         # TODO handle save_all_controllers
         smac_runner = SMACRunner(output_dir, restore_dir, use_default_initial_design)
-        data_store = smac_runner.get_data_store()
+        data_store = FileDataStore(smac_runner.data_dir)
         
         if isinstance(tasks, Task):
             tasks = [tasks]
@@ -459,49 +505,62 @@ class ControlTuner:
         tuned_controller = controller.clone()
         tuned_controller.set_ocp(tasks[0].get_ocp())
         tuned_controller.set_config(inc_cfg)
-        tuned_controller.build(cfg_evaluator.sysid_trajs)
+        trajs = cfg_evaluator.sysid_trajs.unwrap()
+        tuned_controller.build(trajs)
 
-        tune_result = get_tune_result(cfg_evaluator, run_history)
+        tune_result = get_tune_result(cfg_evaluator.train_surr_info, run_history)
 
         return tuned_controller, tune_result
 
 @dataclass
 class ControlCfgEvaluator:
-    controller: Controller
+    controller: WrappedData     #Controller
+    tasks : List[Task]
     performance_metric: ControlPerformanceMetric
-    sysid_trajs: List[Trajectory]
+    sysid_trajs: WrappedData    #List[Trajectory]
     control_evaluator: ControlEvaluator
-    truedyn_evaluator: ControlEvaluator
-    surr_tune_result: Optional[ModelTunerResult] = None
-    data_store: Optional[data_store] = None
-
-    def __post_init__(self):
-        if self.data_store:
-            self.sysid_trajs = self.data_store.wrap(self.sysid_trajs)
+    surrogates : WrappedData    #List[Model]
+    truedyn: WrappedData        #Dynamics
+    parallel_backend : ParallelBackend
+    data_store: DataStore
+    train_surr_info: Optional[ModelTunerResult] = None
 
     def __call__(self, cfg):
         print("\n>>> ", datetime.datetime.now(), "> Evaluating Cfg: \n", cfg)
-        controller = self.controller.clone()
-
+        
+        #unpack everything
+        controller = controller.unwrap()
+        trajs = self.sysid_trajs.unwrap()
+        if self.control_evaluator is None:
+            if len(self.surrogates)*len(self.tasks) == 1:
+                self.control_evaluator = StandardEvaluator(controller.system, self.tasks, self.surrogates[0].unwrap())
+            else:
+                self.control_evaluator = ParallelEvaluator(StandardEvaluator(controller.system, self.tasks), self.surrogates, self.data_store, self.parallel_backend)
+        truedyn_evaluator = None
+        if self.truedyn is not None:
+            truedyn_std_evaluator = StandardEvaluator(controller.system, self.tasks, self.truedyn.unwrap())
+            if len(self.tasks)==1:
+                truedyn_evaluator = truedyn_std_evaluator
+            else:
+                truedyn_evaluator = ParallelEvaluator(truedyn_std_evaluator, self.truedyn, self.data_store, self.parallel_backend)
+        
+        #test controller
         info = dict()
+        controller = self.controller.clone()
         controller.set_config(cfg)
-        controller.build(self.sysid_trajs)
-        if self.data_store:
-            controller = self.data_store.wrap(controller)
+        controller.build(trajs)
         print("Run Controller Evaluation...")
         trials = self.control_evaluator(controller)
+        #evaluate trials and extract run performance
         performance = self.performance_metric(trials)
         info["surr_cost"] = performance
         info["surr_info"] = list(map(trial_to_json, trials))
-        if not self.truedyn_evaluator is None:
-            truedyn_trials = self.truedyn_evaluator(controller)
+        if truedyn_evaluator is not None:
+            truedyn_trials = truedyn_evaluator(controller)
             performance = self.performance_metric(truedyn_trials)
             info["truedyn_cost"] = performance
             info["truedyn_info"] = list(map(trial_to_json, truedyn_trials))
-
-        if hasattr(controller, "cleanup"):
-            controller.cleanup()
-        
+    
         # if self.controller_save_dir:
         #     controller_save_fn = os.path.join(self.controller_save_dir, "controller_{}.pkl".format(self.eval_number))
         #     with open(controller_save_fn, "wb") as f:
